@@ -396,6 +396,17 @@ st.sidebar.markdown(f"**Processed rows:** `{len(df):,}`")
 st.sidebar.markdown(f"**Tickers:** `{df['Ticker'].nunique()}`")
 st.sidebar.markdown(f"**Date range:** `{df['Date'].min().date()}` → `{df['Date'].max().date()}`")
 st.sidebar.markdown(f"**News articles:** `{len(news_df):,}`")
+st.sidebar.markdown("---")
+st.sidebar.markdown(
+    "**Tech Stack**\n"
+    "- pandas\n"
+    "- yfinance\n"
+    "- VADER NLP\n"
+    "- Plotly\n"
+    "- Streamlit\n"
+    "- openpyxl\n"
+    "- Cloudflare Tunnel"
+)
 
 
 # ═════════════════════════════════════════════════════════════
@@ -424,8 +435,8 @@ if "Pipeline Overview" in PAGE:
         dict(num="01", name="Data Ingestion", tool="yfinance API + openpyxl",
              detail="50 tickers × 10 years of daily OHLCV fetched from Yahoo Finance. Saved to Excel for reproducibility.",
              rows_in="Yahoo Finance API", rows_out=f"{raw_rows:,} rows", cols=str(len(raw_df.columns)), color="#26a69a"),
-           dict(num="02", name="Load into pandas", tool="pandas read_csv() · DataFrame copy()",
-               detail="Processed dataset loaded directly into pandas. Schema is already aligned with the notebook, and row counts are confirmed with len(df).",
+          dict(num="02", name="Distributed-style Partitioned Load", tool="pandas read_csv() · chunked groupby simulation",
+              detail="Processed dataset loaded in pandas with ticker-wise partition-style operations to mirror distributed map-then-aggregate behavior.",
              rows_in=f"{raw_rows:,}", rows_out=f"{raw_rows:,}", cols=str(len(raw_df.columns)), color="#26a69a"),
            dict(num="03", name="Data Cleaning", tool="pandas dropna() · filter() · astype()",
                detail=f"Yahoo Finance extract had no null values in the price data. Only positive-price and type checks were applied.",
@@ -468,7 +479,16 @@ if "Pipeline Overview" in PAGE:
         </div>""", unsafe_allow_html=True)
 
     st.markdown("---")
-    st.subheader("Data Volume Flow — Sankey Diagram")
+    st.info("In production, this stage uses PySpark's spark.read.csv() with partitioning by Ticker. Our pandas simulation mirrors this with chunked groupby operations per ticker — the same map-then-aggregate pattern.")
+    b1, b2, b3, b4 = st.columns(4)
+    b1.success("MapReduce")
+    b2.success("Partitioning")
+    b3.success("Lazy Evaluation (simulated)")
+    b4.success("Fault Tolerance (try/except blocks)")
+
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        st.subheader("Data Volume Flow — Sankey Diagram")
     fig_sk = go.Figure(go.Sankey(
         node=dict(
                  label=["yfinance API","stocks_raw.xlsx","pandas Load","After Validation",
@@ -487,9 +507,12 @@ if "Pipeline Overview" in PAGE:
     ))
     fig_sk.update_layout(height=360, template="plotly_dark",
                          paper_bgcolor="rgba(0,0,0,0)", font_color="#a0aec0")
-    st.plotly_chart(fig_sk, use_container_width=True)
+    with c2:
+        st.plotly_chart(fig_sk, use_container_width=True)
 
-    st.subheader("Column Count Growth Through Pipeline")
+    c3, c4 = st.columns([1, 1])
+    with c3:
+        st.subheader("Column Count Growth Through Pipeline")
     s_names = ["Raw","After Clean","+ Date cols","+ MA/Return/Vol","+ Sentiment","Final"]
     c_counts = [8, 8, 12, 18, 23, len(df.columns)]
     fig_c = go.Figure(go.Bar(
@@ -500,7 +523,32 @@ if "Pipeline Overview" in PAGE:
     fig_c.update_layout(height=280, template="plotly_dark",
                         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                         yaxis_title="Number of Columns")
-    st.plotly_chart(fig_c, use_container_width=True)
+    with c4:
+        st.plotly_chart(fig_c, use_container_width=True)
+
+    st.subheader("Conceptual Architecture")
+    arch_c1, arch_c2, arch_c3 = st.columns(3)
+    with arch_c1:
+        st.markdown("""
+        <div style="background:#1a1f2e;border-left:4px solid #26a69a;border-radius:8px;padding:12px;">
+          <h4 style="margin:0;color:#e2e8f0;">🗄️ Data Layer</h4>
+          <p style="margin:8px 0 0;color:#a0aec0;">yfinance API → Excel → CSV</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with arch_c2:
+        st.markdown("""
+        <div style="background:#1a1f2e;border-left:4px solid #26a69a;border-radius:8px;padding:12px;">
+          <h4 style="margin:0;color:#e2e8f0;">⚙️ Processing Layer</h4>
+          <p style="margin:8px 0 0;color:#a0aec0;">pandas (MapReduce-style groupby), VADER NLP, MACD/RSI feature engineering</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with arch_c3:
+        st.markdown("""
+        <div style="background:#1a1f2e;border-left:4px solid #26a69a;border-radius:8px;padding:12px;">
+          <h4 style="margin:0;color:#e2e8f0;">📡 Serving Layer</h4>
+          <p style="margin:8px 0 0;color:#a0aec0;">Streamlit dashboard, Plotly interactive charts, Cloudflare tunnel for public access</p>
+        </div>
+        """, unsafe_allow_html=True)
 
 
 # ═════════════════════════════════════════════════════════════
@@ -613,7 +661,7 @@ elif "Stage Inspector" in PAGE:
 elif "Stock Analysis" in PAGE:
     st.title("📈 Stock Price Analysis")
 
-    c1, c2 = st.columns([1, 2])
+    c1, c2 = st.columns([1, 1])
     with c1:
         sel = st.selectbox("Ticker", ALL_TICKERS,
                            index=ALL_TICKERS.index("AAPL") if "AAPL" in ALL_TICKERS else 0)
@@ -637,13 +685,12 @@ elif "Stock Analysis" in PAGE:
     lt = tdf.iloc[-1]
     pv = tdf.iloc[-2] if len(tdf) > 1 else tdf.iloc[0]
 
-    ka, kb, kc, kd, ke, kf = st.columns(6)
+    ka, kb, kc, kd, ke = st.columns(5)
     ka.metric("Close",       f"₹{lt['Close']:.2f}", f"{lt['Close']-pv['Close']:+.2f}")
     kb.metric("Daily Ret.",  f"{lt.get('Daily_Return_Pct', 0):.2f}%")
     kc.metric("MA 7",        f"₹{lt['MA_7']:.2f}" if pd.notna(lt.get('MA_7')) else "—")
     kd.metric("MA 30",       f"₹{lt['MA_30']:.2f}" if pd.notna(lt.get('MA_30')) else "—")
-    ke.metric("Volatility",  f"{lt['Volatility_14d']:.2f}%" if pd.notna(lt.get('Volatility_14d')) else "—")
-    kf.metric("Signal",      str(lt.get("Combined_Signal", "HOLD")))
+    ke.metric("Volatility / Signal",  f"{lt['Volatility_14d']:.2f}% | {lt.get('Combined_Signal', 'HOLD')}" if pd.notna(lt.get('Volatility_14d')) else str(lt.get("Combined_Signal", "HOLD")))
 
     st.markdown("**Why this signal?**")
     st.info(f"Score = {lt.get('Signal_Score', 0):.0f} | {lt.get('Signal_Reason', 'No reason available.')}")
@@ -737,6 +784,7 @@ elif "Sentiment" in PAGE:
     st.title("🗞️ Sentiment Analysis")
     active_model = news_df["Model"].dropna().iloc[0] if not news_df.empty and "Model" in news_df.columns else "VADER"
     st.caption(f"{active_model} applied to financial news headlines using pandas")
+    st.info("Sentiment scores use VADER (Valence Aware Dictionary and sEntiment Reasoner) — a rule-based NLP model. Scores range from -1 (very negative) to +1 (very positive). Aggregated daily per ticker using a MapReduce-style groupby mean.")
 
     with st.expander("ℹ️ How VADER runs in the notebook — click to see code"):
         st.code("""
@@ -929,6 +977,15 @@ elif "Next Moves" in PAGE:
         "- **Review SELL** candidates: confirm momentum weakness + negative sentiment, then consider reducing exposure.\n"
         "- **High volatility** list: tighten risk controls (position sizing / stop-loss) before taking any trade."
     )
+    with st.expander("Signal Logic"):
+        logic = pd.DataFrame([
+            {"Indicator": "MA Crossover", "Weight": 1, "Bullish Condition": "MA_7 > MA_30", "Bearish Condition": "MA_7 < MA_30"},
+            {"Indicator": "MACD Histogram", "Weight": 1, "Bullish Condition": "MACD_Hist > 0", "Bearish Condition": "MACD_Hist < 0"},
+            {"Indicator": "RSI-14", "Weight": 1, "Bullish Condition": "RSI <= 35", "Bearish Condition": "RSI >= 65"},
+            {"Indicator": "Volume Ratio", "Weight": 1, "Bullish Condition": "Volume_Ratio >= 1.25 with uptrend", "Bearish Condition": "Volume_Ratio >= 1.25 with downtrend"},
+            {"Indicator": "VADER Sentiment", "Weight": 1, "Bullish Condition": "Avg_Sentiment >= 0.10", "Bearish Condition": "Avg_Sentiment <= -0.10"},
+        ])
+        st.dataframe(logic, use_container_width=True, hide_index=True)
 
 
 # ═════════════════════════════════════════════════════════════
@@ -1129,6 +1186,19 @@ elif "Research Graphs" in PAGE:
     if not graph_files:
         st.warning("No graph images found in `graphs/`.")
     else:
+        graph_captions = {
+            "graph1_row_coverage.png": "Row coverage per ticker confirming no data gaps.",
+            "graph2_null_check.png": "Null value audit after ingestion and cleaning.",
+            "graph3_returns_analysis.png": "Distribution of daily returns across all 50 tickers.",
+            "graph4_sector_cumulative.png": "Sector-wise cumulative performance comparison.",
+            "graph5_outliers.png": "Outlier events identified from return spikes.",
+            "graph6_moving_averages.png": "Moving average trend behavior across selected tickers.",
+            "graph7_risk_volatility.png": "14-day rolling volatility — higher values indicate riskier behavior.",
+            "graph8a_momentum_heatmap.png": "Momentum heatmap across tickers and time windows.",
+            "graph8b_momentum_bars.png": "Momentum score ranking across stocks.",
+            "graph9_beta.png": "Beta analysis showing market sensitivity per stock.",
+            "graph10_correlations.png": "Cross-feature and return correlation structure."
+        }
         st.markdown(f"**Total figures:** `{len(graph_files)}`")
         selected = st.multiselect(
             "Filter figures",
@@ -1145,13 +1215,15 @@ elif "Research Graphs" in PAGE:
                 with c1:
                     st.markdown(f"**{left_name}**")
                     st.image(left_path, use_container_width=True)
+                    st.caption(graph_captions.get(left_name, "Supporting analysis chart generated from MarketIQ pipeline."))
                 if i + 1 < len(selected):
                     right_name = selected[i + 1]
                     right_path = os.path.join(graph_dir, right_name)
                     with c2:
                         st.markdown(f"**{right_name}**")
                         st.image(right_path, use_container_width=True)
+                        st.caption(graph_captions.get(right_name, "Supporting analysis chart generated from MarketIQ pipeline."))
 
 
 st.markdown("---")
-st.caption("MarketIQ | pandas · VADER · Streamlit | Vidyashilp University — Big Data & Cloud Computing")
+st.caption("MarketIQ | 50 Tickers · 10 Years · 125,000+ Records | pandas · VADER NLP · Plotly · Streamlit | Vidyashilp University — Big Data & Cloud Computing")
