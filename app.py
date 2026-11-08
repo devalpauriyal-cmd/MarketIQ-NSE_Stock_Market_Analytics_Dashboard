@@ -5,6 +5,12 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 import numpy as np
 import os
+from pathlib import Path
+
+from marketiq.analysis import normalize_processed_frame, _add_signal_features, _signal_reason
+
+ROOT = Path(__file__).resolve().parent
+DATA_DIR = ROOT / "data"
 import yfinance as yf
 
 try:
@@ -18,7 +24,7 @@ except Exception:
     pipeline = None
 
 st.set_page_config(
-    page_title="MarketIQ — Big Data Pipeline",
+    page_title="MarketIQ — NSE Market Analysis",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -142,13 +148,11 @@ def _fetch_yahoo_news_frame(sector_lookup, tickers, max_items_per_ticker=8):
     news_frame = pd.DataFrame(rows).drop_duplicates(subset=["Date", "Ticker", "Headline"]).sort_values(["Date", "Ticker"])
     return news_frame
 
-# ─────────────────────────────────────────────────────────────
 #  DATA LOADING
-# ─────────────────────────────────────────────────────────────
 @st.cache_data
 def load_processed():
     path = _first_existing_path([
-        "data/processed_data.csv",
+        str(DATA_DIR / "processed_data.csv"),
     ])
     if path is None:
         raise FileNotFoundError("Could not find data/processed_data.csv.")
@@ -158,7 +162,7 @@ def load_processed():
 def load_news():
     # Prefer a cached workbook first; if it is missing, build one from live Yahoo headlines.
     path = _first_existing_path([
-        "data/news_raw.xlsx",
+        str(DATA_DIR / "news_raw.xlsx"),
     ])
     if path is None:
         try:
@@ -166,7 +170,7 @@ def load_news():
             tickers = list(sector_lookup.keys())
             news_frame = _fetch_yahoo_news_frame(sector_lookup, tickers)
             if not news_frame.empty:
-                news_frame.to_excel("data/news_raw.xlsx", index=False, sheet_name="News")
+                news_frame.to_excel(str(DATA_DIR / "news_raw.xlsx"), index=False, sheet_name="News")
             return news_frame
         except Exception:
             # If optional sentiment dependencies (transformers/vader) or network access are unavailable,
@@ -177,177 +181,21 @@ def load_news():
 @st.cache_data
 def load_raw():
     path = _first_existing_path([
-        "data/stocks_raw.xlsx",
+        str(DATA_DIR / "stocks_raw.xlsx"),
     ])
     if path is None:
         return pd.DataFrame()
     return pd.read_excel(path, parse_dates=["Date"])
 
 
-def normalize_processed_frame(frame):
-    frame = frame.copy()
-
-    # Keep notebook and dashboard column names aligned without failing on older exports.
-    if "MA7" in frame.columns and "MA_7" not in frame.columns:
-        frame["MA_7"] = frame["MA7"]
-    if "MA30" in frame.columns and "MA_30" not in frame.columns:
-        frame["MA_30"] = frame["MA30"]
-    # The notebook sometimes exports a long moving average as MA200; the dashboard uses MA_60.
-    if "MA200" in frame.columns and "MA_60" not in frame.columns:
-        frame["MA_60"] = frame["MA200"]
-    if "Volume_MA7" in frame.columns and "Volume_MA_7" not in frame.columns:
-        frame["Volume_MA_7"] = frame["Volume_MA7"]
-    if "Volume_MA_7" not in frame.columns and {"Ticker", "Date", "Volume"}.issubset(frame.columns):
-        frame = frame.sort_values(["Ticker", "Date"]).reset_index(drop=True)
-        frame["Volume_MA_7"] = frame.groupby("Ticker")["Volume"].transform(
-            lambda s: s.rolling(7, min_periods=1).mean()
-        )
-
-    if "MA_60" not in frame.columns and {"Ticker", "Date", "Close"}.issubset(frame.columns):
-        frame = frame.sort_values(["Ticker", "Date"]).reset_index(drop=True)
-        frame["MA_60"] = frame.groupby("Ticker")["Close"].transform(
-            lambda s: s.rolling(60, min_periods=1).mean()
-        )
-
-    if "Daily_Range" not in frame.columns and {"High", "Low"}.issubset(frame.columns):
-        frame["Daily_Range"] = frame["High"] - frame["Low"]
-
-    if "Price_vs_MA30_Pct" not in frame.columns and {"Close", "MA_30"}.issubset(frame.columns):
-        frame["Price_vs_MA30_Pct"] = ((frame["Close"] - frame["MA_30"]) / frame["MA_30"]) * 100
-
-    if "Avg_Sentiment" not in frame.columns:
-        frame["Avg_Sentiment"] = 0.0
-    if "Max_Sentiment" not in frame.columns:
-        frame["Max_Sentiment"] = frame["Avg_Sentiment"]
-    if "Min_Sentiment" not in frame.columns:
-        frame["Min_Sentiment"] = frame["Avg_Sentiment"]
-    if "News_Count" not in frame.columns:
-        frame["News_Count"] = 0
-
-    if "Combined_Signal" not in frame.columns:
-        if "Price_Signal" in frame.columns:
-            # Reuse the notebook's bullish/bearish signal, but keep one simple BUY/SELL/HOLD label set.
-            signal_map = {"BULLISH": "BUY", "BEARISH": "SELL"}
-            frame["Combined_Signal"] = frame["Price_Signal"].map(signal_map).fillna("HOLD")
-        else:
-            frame["Combined_Signal"] = "HOLD"
-
-    return frame
-
-
-def _add_signal_features(frame):
-    """Add trend, momentum, sentiment, and volume features used for the final trade signal."""
-    frame = frame.sort_values(["Ticker", "Date"]).reset_index(drop=True).copy()
-
-    frame["Trend_Score"] = np.select(
-        [frame["MA_7"] > frame["MA_30"], frame["MA_7"] < frame["MA_30"]],
-        [1, -1],
-        default=0,
-    )
-
-    frame["MACD_Line"] = frame.groupby("Ticker")["Close"].transform(
-        lambda s: s.ewm(span=12, adjust=False).mean() - s.ewm(span=26, adjust=False).mean()
-    )
-    frame["MACD_Signal"] = frame.groupby("Ticker")["MACD_Line"].transform(
-        lambda s: s.ewm(span=9, adjust=False).mean()
-    )
-    frame["MACD_Hist"] = frame["MACD_Line"] - frame["MACD_Signal"]
-    frame["MACD_Score"] = np.select(
-        [frame["MACD_Hist"] > 0, frame["MACD_Hist"] < 0],
-        [1, -1],
-        default=0,
-    )
-
-    delta = frame.groupby("Ticker")["Close"].diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.groupby(frame["Ticker"]).transform(lambda s: s.ewm(alpha=1 / 14, adjust=False).mean())
-    avg_loss = loss.groupby(frame["Ticker"]).transform(lambda s: s.ewm(alpha=1 / 14, adjust=False).mean())
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    frame["RSI_14"] = (100 - (100 / (1 + rs))).fillna(50.0)
-    frame["RSI_Score"] = np.select(
-        [frame["RSI_14"] <= 35, frame["RSI_14"] >= 65],
-        [1, -1],
-        default=0,
-    )
-
-    frame["Volume_Ratio"] = (frame["Volume"] / frame["Volume_MA_7"].replace(0, np.nan)).replace([np.inf, -np.inf], np.nan).fillna(1.0)
-    frame["Volume_Score"] = np.select(
-        [
-            (frame["Volume_Ratio"] >= 1.25) & (frame["Trend_Score"] > 0),
-            (frame["Volume_Ratio"] >= 1.25) & (frame["Trend_Score"] < 0),
-        ],
-        [1, -1],
-        default=0,
-    )
-
-    frame["Sentiment_Score_Adj"] = frame["Avg_Sentiment"].fillna(0.0)
-    frame["Sentiment_Score"] = np.select(
-        [frame["Sentiment_Score_Adj"] >= 0.10, frame["Sentiment_Score_Adj"] <= -0.10],
-        [1, -1],
-        default=0,
-    )
-
-    frame["Signal_Score"] = (
-        frame["Trend_Score"]
-        + frame["MACD_Score"]
-        + frame["RSI_Score"]
-        + frame["Volume_Score"]
-        + frame["Sentiment_Score"]
-    )
-    frame["Combined_Signal"] = np.select(
-        [frame["Signal_Score"] >= 2, frame["Signal_Score"] <= -2],
-        ["BUY", "SELL"],
-        default="HOLD",
-    )
-
-    return frame
-
-
-def _signal_reason(row):
-    """Build a short plain-English explanation for the current BUY/SELL/HOLD label."""
-    pieces = []
-
-    if pd.notna(row.get("MA_7")) and pd.notna(row.get("MA_30")):
-        if row["MA_7"] > row["MA_30"]:
-            pieces.append("short-term price is above the medium-term trend")
-        elif row["MA_7"] < row["MA_30"]:
-            pieces.append("short-term price is below the medium-term trend")
-
-    if pd.notna(row.get("MACD_Hist")):
-        if row["MACD_Hist"] > 0:
-            pieces.append("MACD momentum is positive")
-        elif row["MACD_Hist"] < 0:
-            pieces.append("MACD momentum is negative")
-
-    if pd.notna(row.get("RSI_14")):
-        if row["RSI_14"] <= 35:
-            pieces.append(f"RSI is oversold at {row['RSI_14']:.1f}")
-        elif row["RSI_14"] >= 65:
-            pieces.append(f"RSI is overbought at {row['RSI_14']:.1f}")
-        else:
-            pieces.append(f"RSI is neutral at {row['RSI_14']:.1f}")
-
-    if pd.notna(row.get("Volume_Ratio")) and row["Volume_Ratio"] >= 1.25:
-        pieces.append(f"volume is {row['Volume_Ratio']:.2f}x the 7-day average")
-
-    if pd.notna(row.get("Avg_Sentiment")):
-        if row["Avg_Sentiment"] >= 0.10:
-            pieces.append(f"news sentiment is positive ({row['Avg_Sentiment']:.2f})")
-        elif row["Avg_Sentiment"] <= -0.10:
-            pieces.append(f"news sentiment is negative ({row['Avg_Sentiment']:.2f})")
-
-    if not pieces:
-        pieces.append("the indicators are mixed, so the model stays neutral")
-
-    return "; ".join(pieces)
-
-df      = normalize_processed_frame(load_processed())
+df = load_processed()
+processed_column_count = len(df.columns)
+df = normalize_processed_frame(df)
 news_df = load_news()
 raw_df  = None
 
 if not news_df.empty:
-    # Aggregate news by day and ticker so the same sentiment fields can drive the whole dashboard.
+    # Join only matching dates; newer headlines do not belong to historical price rows.
     news_df = news_df.copy()
     news_df["Date"] = pd.to_datetime(news_df["Date"])
     daily_sent = news_df.groupby(["Date", "Ticker"]).agg(
@@ -365,7 +213,7 @@ if not news_df.empty:
                 df[col] = df[news_col].combine_first(df[col])
             else:
                 df[col] = df[news_col]
-            df.drop(columns=[news_col], inplace=True)
+            df = df.drop(columns=[news_col])
 
 df = _add_signal_features(df)
 df["Signal_Reason"] = df.apply(_signal_reason, axis=1)
@@ -373,9 +221,7 @@ df["Signal_Reason"] = df.apply(_signal_reason, axis=1)
 ALL_TICKERS = sorted(df["Ticker"].unique().tolist())
 ALL_SECTORS = sorted(df["Sector"].unique().tolist())
 
-# ─────────────────────────────────────────────────────────────
 #  SIDEBAR
-# ─────────────────────────────────────────────────────────────
 st.sidebar.markdown("## 📊 MarketIQ")
 st.sidebar.caption("Big Data & Cloud Computing — Vidyashilp University")
 st.sidebar.markdown("---")
@@ -405,16 +251,14 @@ st.sidebar.markdown(
     "- Plotly\n"
     "- Streamlit\n"
     "- openpyxl\n"
-    "- Cloudflare Tunnel"
+    "- Cached market-data exports"
 )
 
 
-# ═════════════════════════════════════════════════════════════
 #  PAGE 1 — PIPELINE OVERVIEW
-# ═════════════════════════════════════════════════════════════
 if "Pipeline Overview" in PAGE:
     st.title("🔁 Big Data Processing Pipeline")
-    st.caption("End-to-end view of how raw financial data flows through MarketIQ")
+    st.caption("Notebook workflow and stored exports. Intermediate stage descriptions are not a replay of the pipeline.")
 
     raw_df = load_raw()
 
@@ -423,7 +267,7 @@ if "Pipeline Overview" in PAGE:
 
     k1, k2, k3, k4, k5 = st.columns(5)
     k1.metric("Raw Rows Ingested",  f"{raw_rows:,}")
-    k2.metric("Yahoo Null Check",   "0", "no nulls in extract")
+    k2.metric("Raw missing values", f"{int(raw_df.isna().sum().sum()):,}")
     k3.metric("Final Feature Cols", f"{len(df.columns)}")
     k4.metric("News Articles",      f"{len(news_df):,}")
     k5.metric("Final Dataset Rows", f"{len(df):,}")
@@ -433,13 +277,13 @@ if "Pipeline Overview" in PAGE:
 
     stages = [
         dict(num="01", name="Data Ingestion", tool="yfinance API + openpyxl",
-             detail="50 tickers × 10 years of daily OHLCV fetched from Yahoo Finance. Saved to Excel for reproducibility.",
+             detail=f"{len(ALL_TICKERS)} stocks, {df['Date'].min().date()} to {df['Date'].max().date()}. Raw OHLCV data is retained in Excel.",
              rows_in="Yahoo Finance API", rows_out=f"{raw_rows:,} rows", cols=str(len(raw_df.columns)), color="#26a69a"),
-          dict(num="02", name="Distributed-style Partitioned Load", tool="pandas read_csv() · chunked groupby simulation",
-              detail="Processed dataset loaded in pandas with ticker-wise partition-style operations to mirror distributed map-then-aggregate behavior.",
+          dict(num="02", name="Local Data Load", tool="pandas read_csv()",
+              detail="The exported dataset is loaded into one pandas DataFrame. Calculations are grouped by ticker.",
              rows_in=f"{raw_rows:,}", rows_out=f"{raw_rows:,}", cols=str(len(raw_df.columns)), color="#26a69a"),
            dict(num="03", name="Data Cleaning", tool="pandas dropna() · filter() · astype()",
-               detail=f"Yahoo Finance extract had no null values in the price data. Only positive-price and type checks were applied.",
+               detail="The notebook checks missing values, positive prices, volume and OHLC consistency before creating features.",
                rows_in=f"{raw_rows:,}", rows_out=f"{valid_rows:,}", cols=str(len(raw_df.columns)+4), color="#4caf50"),
            dict(num="04", name="Feature Engineering", tool="pandas rolling() · groupby()",
                detail="MA_7, MA_30, MA_60, Volatility_14d, Daily_Return_Pct, Volume_MA_7, Price_Signal computed with ticker-wise pandas operations.",
@@ -479,12 +323,7 @@ if "Pipeline Overview" in PAGE:
         </div>""", unsafe_allow_html=True)
 
     st.markdown("---")
-    st.info("In production, this stage uses PySpark's spark.read.csv() with partitioning by Ticker. Our pandas simulation mirrors this with chunked groupby operations per ticker — the same map-then-aggregate pattern.")
-    b1, b2, b3, b4 = st.columns(4)
-    b1.success("MapReduce")
-    b2.success("Partitioning")
-    b3.success("Lazy Evaluation (simulated)")
-    b4.success("Fault Tolerance (try/except blocks)")
+    st.info("This dashboard runs locally with pandas. The notebook includes grouped-aggregation examples and an optional Spark setup; it does not deploy a distributed cluster.")
 
     c1, c2 = st.columns([1, 1])
     with c1:
@@ -512,9 +351,9 @@ if "Pipeline Overview" in PAGE:
 
     c3, c4 = st.columns([1, 1])
     with c3:
-        st.subheader("Column Count Growth Through Pipeline")
-    s_names = ["Raw","After Clean","+ Date cols","+ MA/Return/Vol","+ Sentiment","Final"]
-    c_counts = [8, 8, 12, 18, 23, len(df.columns)]
+        st.subheader("Columns in stored exports and dashboard")
+    s_names = ["Raw workbook", "Processed CSV", "Dashboard frame"]
+    c_counts = [len(raw_df.columns), processed_column_count, len(df.columns)]
     fig_c = go.Figure(go.Bar(
         x=s_names, y=c_counts,
         marker_color=["#26a69a","#2ecc71","#4caf50","#f39c12","#9b59b6","#e74c3c"],
@@ -539,21 +378,19 @@ if "Pipeline Overview" in PAGE:
         st.markdown("""
         <div style="background:#1a1f2e;border-left:4px solid #26a69a;border-radius:8px;padding:12px;">
           <h4 style="margin:0;color:#e2e8f0;">⚙️ Processing Layer</h4>
-          <p style="margin:8px 0 0;color:#a0aec0;">pandas (MapReduce-style groupby), VADER NLP, MACD/RSI feature engineering</p>
+          <p style="margin:8px 0 0;color:#a0aec0;">pandas grouped calculations, headline sentiment, MACD and RSI</p>
         </div>
         """, unsafe_allow_html=True)
     with arch_c3:
         st.markdown("""
         <div style="background:#1a1f2e;border-left:4px solid #26a69a;border-radius:8px;padding:12px;">
           <h4 style="margin:0;color:#e2e8f0;">📡 Serving Layer</h4>
-          <p style="margin:8px 0 0;color:#a0aec0;">Streamlit dashboard, Plotly interactive charts, Cloudflare tunnel for public access</p>
+          <p style="margin:8px 0 0;color:#a0aec0;">Streamlit dashboard and interactive Plotly charts; optional tunnel for Colab demonstrations</p>
         </div>
         """, unsafe_allow_html=True)
 
 
-# ═════════════════════════════════════════════════════════════
 #  PAGE 2 — STAGE INSPECTOR
-# ═════════════════════════════════════════════════════════════
 elif "Stage Inspector" in PAGE:
     st.title("🔬 Stage-by-Stage Data Inspector")
     st.caption("Inspect actual data, schema, null counts and statistics at each pipeline stage")
@@ -586,9 +423,9 @@ elif "Stage Inspector" in PAGE:
     expl = {
         "Stage 1": "**Raw data** from Yahoo Finance API. No transformations. May contain nulls and incorrect types.",
         "Stage 2": "**After pandas validation:** positive-price checks, explicit type casting, date parts added. Yahoo Finance extract had no nulls.",
-        "Stage 3": "**After feature engineering** via Window Functions: MA_7/30/60, Daily_Return_Pct, Volatility_14d, Price_Signal.",
-        "Stage 4": "**After sentiment join:** VADER scores aggregated daily, left-joined on [Date,Ticker]. Nulls filled with 0.",
-        "Stage 5": "**Final dataset** — all columns including Combined_Signal. This is what the dashboard reads.",
+        "Stage 3": "**Feature columns:** moving averages, daily returns, volatility and price labels. MA_60 is computed by the dashboard when absent from the export.",
+        "Stage 4": "**Sentiment fields:** cached scores averaged by date and ticker, then left-joined to prices. Missing matches default to zero; zero does not establish neutral news coverage.",
+        "Stage 5": "**Dashboard frame:** the saved CSV plus normalized columns, matched headline scores and recalculated indicator labels.",
     }
 
     skey = [k for k in stage_map if k in stage_choice][0]
@@ -621,7 +458,7 @@ elif "Stage Inspector" in PAGE:
         num = sdf.select_dtypes(include="number")
         if not num.empty:
             d = num.describe().T.round(4).reset_index()
-            d.rename(columns={"index":"Column"}, inplace=True)
+            d = d.rename(columns={"index":"Column"})
             st.dataframe(d, hide_index=True, height=420)
 
     st.markdown("**Sample rows (first 100)**")
@@ -655,9 +492,7 @@ elif "Stage Inspector" in PAGE:
         st.plotly_chart(fig_h, use_container_width=True)
 
 
-# ═════════════════════════════════════════════════════════════
 #  PAGE 3 — STOCK ANALYSIS
-# ═════════════════════════════════════════════════════════════
 elif "Stock Analysis" in PAGE:
     st.title("📈 Stock Price Analysis")
 
@@ -718,23 +553,23 @@ elif "Stock Analysis" in PAGE:
     fig.update_yaxes(title_text="Return %",  row=3, col=1)
     st.plotly_chart(fig, use_container_width=True)
 
-    st.subheader("📡 Golden Cross / Death Cross Events")
+    st.subheader("7/30-session moving-average crossovers")
     cr = tdf[["Date","Close","MA_7","MA_30"]].dropna().copy()
     cr["pM7"]    = cr["MA_7"].shift(1)
     cr["pM30"]   = cr["MA_30"].shift(1)
     cr["golden"] = (cr["pM7"] < cr["pM30"]) & (cr["MA_7"] >= cr["MA_30"])
     cr["death"]  = (cr["pM7"] > cr["pM30"]) & (cr["MA_7"] <= cr["MA_30"])
-    gc = cr[cr["golden"]][["Date","Close"]].round(2).reset_index(drop=True)
-    dc = cr[cr["death"]][["Date","Close"]].round(2).reset_index(drop=True)
+    gc = cr[cr["golden"]][["Date","Close"]].round({"Close": 2}).reset_index(drop=True)
+    dc = cr[cr["death"]][["Date","Close"]].round({"Close": 2}).reset_index(drop=True)
     e1, e2 = st.columns(2)
     with e1:
-        st.markdown(f"**🟢 Golden Cross: {len(gc)}**")
+        st.markdown(f"**Upward crossovers: {len(gc)}**")
         st.dataframe(gc if not gc.empty else pd.DataFrame({"Msg":["None in range"]}), hide_index=True)
     with e2:
-        st.markdown(f"**🔴 Death Cross: {len(dc)}**")
+        st.markdown(f"**Downward crossovers: {len(dc)}**")
         st.dataframe(dc if not dc.empty else pd.DataFrame({"Msg":["None in range"]}), hide_index=True)
 
-    st.subheader("📅 Monthly Return Heatmap")
+    st.subheader("Mean daily return by month")
     t2 = tdf.copy()
     t2["Year"]  = t2["Date"].dt.year
     t2["Month"] = t2["Date"].dt.month
@@ -763,7 +598,7 @@ elif "Stock Analysis" in PAGE:
                          yaxis_title="Drawdown %")
     st.plotly_chart(fig_dd, use_container_width=True)
 
-    st.subheader("📐 Rolling 90-Day Sharpe Ratio")
+    st.subheader("Rolling 90-session Sharpe ratio (zero risk-free rate)")
     tdf["RM"] = tdf["Daily_Return_Pct"].rolling(90).mean()
     tdf["RS"] = tdf["Daily_Return_Pct"].rolling(90).std()
     tdf["Sh"] = (tdf["RM"] / tdf["RS"]) * np.sqrt(252)
@@ -777,16 +612,17 @@ elif "Stock Analysis" in PAGE:
     st.plotly_chart(fig_sh, use_container_width=True)
 
 
-# ═════════════════════════════════════════════════════════════
 #  PAGE 4 — SENTIMENT ANALYSIS
-# ═════════════════════════════════════════════════════════════
 elif "Sentiment" in PAGE:
     st.title("🗞️ Sentiment Analysis")
     active_model = news_df["Model"].dropna().iloc[0] if not news_df.empty and "Model" in news_df.columns else "VADER"
-    st.caption(f"{active_model} applied to financial news headlines using pandas")
-    st.info("Sentiment scores use VADER (Valence Aware Dictionary and sEntiment Reasoner) — a rule-based NLP model. Scores range from -1 (very negative) to +1 (very positive). Aggregated daily per ticker using a MapReduce-style groupby mean.")
+    st.caption(f"Cached headline scores ({active_model}); daily aggregates are joined only on matching dates.")
+    if news_df.empty:
+        st.info("No headline data is available. Other dashboard pages remain available.")
+        st.stop()
+    st.info("Scores range from -1 to +1. Cached scores are read from the workbook; the live fallback uses FinBERT when installed, otherwise VADER. These are headline-tone scores, not return forecasts.")
 
-    with st.expander("ℹ️ How VADER runs in the notebook — click to see code"):
+    with st.expander("Headline scoring example"):
         st.code("""
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
@@ -871,12 +707,10 @@ daily_sent = news_df.groupby(["Date", "Ticker"]).agg(
     st.dataframe(samp, use_container_width=True, height=320, hide_index=True)
 
 
-# ═════════════════════════════════════════════════════════════
 #  PAGE 5 — NEXT MOVES
-# ═════════════════════════════════════════════════════════════
 elif "Next Moves" in PAGE:
     st.title("🧭 Next Moves")
-    st.caption("Actionable watchlist and planning view based on the latest computed signals.")
+    st.caption("Review rule-based indicator labels at the latest date in the stored price data.")
 
     latest_date = df["Date"].max()
     latest = (
@@ -959,10 +793,10 @@ elif "Next Moves" in PAGE:
             hv = plan.nlargest(10, "Volatility_14d")[["Ticker", "Sector", "Volatility_14d", "Combined_Signal"]]
             st.dataframe(hv.round(4), use_container_width=True, hide_index=True, height=220)
 
-        if "Avg_Sentiment" in plan.columns:
-            st.markdown("**Most bullish / bearish (top 5 each)**")
-            bull = plan.nlargest(5, "Avg_Sentiment")[["Ticker", "Sector", "Avg_Sentiment", "News_Count", "Combined_Signal"]]
-            bear = plan.nsmallest(5, "Avg_Sentiment")[["Ticker", "Sector", "Avg_Sentiment", "News_Count", "Combined_Signal"]]
+        if "Avg_Sentiment" in plan.columns and plan["News_Count"].sum() > 0:
+            st.markdown("**Headline sentiment (top 5 each)**")
+            bull = plan[plan["News_Count"] > 0].nlargest(5, "Avg_Sentiment")[["Ticker", "Sector", "Avg_Sentiment", "News_Count", "Combined_Signal"]]
+            bear = plan[plan["News_Count"] > 0].nsmallest(5, "Avg_Sentiment")[["Ticker", "Sector", "Avg_Sentiment", "News_Count", "Combined_Signal"]]
             cA, cB = st.columns(2)
             with cA:
                 st.caption("Bullish")
@@ -970,12 +804,14 @@ elif "Next Moves" in PAGE:
             with cB:
                 st.caption("Bearish")
                 st.dataframe(bear.round(4), use_container_width=True, hide_index=True, height=210)
+        else:
+            st.caption("No headlines match these latest price observations.")
 
     st.subheader("📌 Suggested workflow")
     st.markdown(
-        "- **Review BUY** candidates: validate trend (MA_7 vs MA_30), check RSI/MACD confirmation, then set entry/stop.\n"
-        "- **Review SELL** candidates: confirm momentum weakness + negative sentiment, then consider reducing exposure.\n"
-        "- **High volatility** list: tighten risk controls (position sizing / stop-loss) before taking any trade."
+        "- Compare the moving-average, RSI and MACD components behind each label.\n"
+        "- Check the observation date and whether a matching headline exists.\n"
+        "- Review volatility separately. These heuristic labels have not been backtested as a trading strategy."
     )
     with st.expander("Signal Logic"):
         logic = pd.DataFrame([
@@ -988,12 +824,10 @@ elif "Next Moves" in PAGE:
         st.dataframe(logic, use_container_width=True, hide_index=True)
 
 
-# ═════════════════════════════════════════════════════════════
 #  PAGE 6 — MARKET INSIGHTS
-# ═════════════════════════════════════════════════════════════
 elif "Market Insights" in PAGE:
     st.title("💡 Market Insights")
-    st.caption("Derived from pandas groupby aggregations across the full 100K+ row dataset")
+    st.caption(f"Grouped summaries across {len(df):,} price rows and {len(ALL_TICKERS)} stocks.")
 
     tp = df.groupby("Ticker").agg(
         Avg_Return    =("Daily_Return_Pct","mean"),
@@ -1025,7 +859,7 @@ elif "Market Insights" in PAGE:
                             yaxis_title="Avg Daily Return %")
         st.plotly_chart(fig_b, use_container_width=True)
 
-    st.subheader("📊 Risk vs Return — All 50 Tickers")
+    st.subheader(f"Risk vs return — {len(ALL_TICKERS)} stocks")
     fig_rr = px.scatter(tp.dropna(),x="Avg_Volatility",y="Avg_Return",
         size="Avg_Close",color="Sector",hover_name="Ticker",
         hover_data={"Avg_Sentiment":":.3f","Avg_Return":":.4f"},
@@ -1080,9 +914,7 @@ elif "Market Insights" in PAGE:
                  use_container_width=True, hide_index=True)
 
 
-# ═════════════════════════════════════════════════════════════
 #  PAGE 6 — SECTOR INTELLIGENCE
-# ═════════════════════════════════════════════════════════════
 elif "Sector Intelligence" in PAGE:
     st.title("📊 Sector Intelligence")
 
@@ -1144,7 +976,7 @@ elif "Sector Intelligence" in PAGE:
                            yaxis_title="Avg VADER Score")
     st.plotly_chart(fig_stl, use_container_width=True)
 
-    st.subheader("Sector Annual Return Heatmap — All Sectors")
+    st.subheader("Mean daily return by sector and year")
     sa  = df.groupby(["Sector","Year"])["Daily_Return_Pct"].mean().reset_index()
     sap = sa.pivot(index="Sector",columns="Year",values="Daily_Return_Pct").round(4)
     fig_sa = go.Figure(go.Heatmap(z=sap.values,x=[str(c) for c in sap.columns],
@@ -1166,14 +998,12 @@ elif "Sector Intelligence" in PAGE:
     ).reset_index().round(4)
     st.dataframe(ts2, use_container_width=True, hide_index=True)
 
-# ═════════════════════════════════════════════════════════════
 #  PAGE 8 — RESEARCH GRAPHS
-# ═════════════════════════════════════════════════════════════
 elif "Research Graphs" in PAGE:
     st.title("🖼️ Research Graphs")
-    st.caption("Static evidence generated during notebook analysis, presented in a clean dashboard format.")
+    st.caption("Saved figures from the analysis notebook.")
 
-    graph_dir = "graphs"
+    graph_dir = ROOT / "graphs"
     graph_files = []
     if os.path.isdir(graph_dir):
         graph_files = sorted(
@@ -1187,9 +1017,9 @@ elif "Research Graphs" in PAGE:
         st.warning("No graph images found in `graphs/`.")
     else:
         graph_captions = {
-            "graph1_row_coverage.png": "Row coverage per ticker confirming no data gaps.",
+            "graph1_row_coverage.png": "Observed rows per stock and year; this does not prove complete trading-day coverage.",
             "graph2_null_check.png": "Null value audit after ingestion and cleaning.",
-            "graph3_returns_analysis.png": "Distribution of daily returns across all 50 tickers.",
+            "graph3_returns_analysis.png": "Distribution of daily returns in the supplied stock universe.",
             "graph4_sector_cumulative.png": "Sector-wise cumulative performance comparison.",
             "graph5_outliers.png": "Outlier events identified from return spikes.",
             "graph6_moving_averages.png": "Moving average trend behavior across selected tickers.",
@@ -1226,4 +1056,4 @@ elif "Research Graphs" in PAGE:
 
 
 st.markdown("---")
-st.caption("MarketIQ | 50 Tickers · 10 Years · 125,000+ Records | pandas · VADER NLP · Plotly · Streamlit | Vidyashilp University — Big Data & Cloud Computing")
+st.caption(f"MarketIQ | {len(ALL_TICKERS)} stocks | {len(df):,} price rows | {df['Date'].min().date()} to {df['Date'].max().date()} | pandas · Plotly · Streamlit")

@@ -1,7 +1,16 @@
 venv/
+.venv/
 __pycache__/
 .ipynb_checkpoints/
-.streamlit/
+.streamlit/secrets.toml
 *.pyc
 *.log
 .DS_Store
+.pytest_cache/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.local-artifacts/
+Thumbs.db
