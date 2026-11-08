@@ -1,0 +1,5 @@
+-r requirements.txt
+matplotlib>=3.9
+seaborn
+scipy
+jupyterlab
