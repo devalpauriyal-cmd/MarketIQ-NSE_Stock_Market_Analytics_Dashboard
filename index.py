@@ -44,8 +44,6 @@ def _value(row: dict[str, str], key: str) -> str:
     return ""
 
 
-@lru_cache(maxsize=1)
-
 def _load_sentiment() -> dict[tuple[str, str], tuple[float, int]]:
     """Read the small cached headline workbook without pulling pandas into the function."""
     if not NEWS_FILE.is_file():
@@ -252,7 +250,7 @@ def sectors():
             "tickers": len(rows),
             "avg_return": round(sum(r["Daily_Return_Pct"] for r in rows) / len(rows), 4),
             "avg_volatility": round(sum(r["Volatility_14d"] for r in rows) / len(rows), 4),
-            "avg_sentiment": round(sum(r["Avg_Sentiment"] for r in rows) / len(rows), 4),
+            "avg_sentiment": round(sum(r["Avg_Sentiment"] for r in rows) / len(rows), 4) if any(r["News_Count"] for r in rows) else None,
             "buy": sum(r["Combined_Signal"] == "BUY" for r in rows),
             "sell": sum(r["Combined_Signal"] == "SELL" for r in rows),
         })
