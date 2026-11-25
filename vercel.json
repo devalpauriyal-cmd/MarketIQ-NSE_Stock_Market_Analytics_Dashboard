@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
     "index.py": {
-      "excludeFiles": "{tests/**,notebooks/**,docs/**,graphs/**,*.ipynb,*.xlsx,*.docx,*.jpeg,*.png,streamlit_app.py,marketiq/**,requirements-streamlit.txt,requirements-dev.txt,requirements-notebook.txt}"
+      "excludeFiles": "{tests/**,notebooks/**,docs/**,graphs/**,*.ipynb,*.docx,*.jpeg,*.png,data/stocks_raw.xlsx,data/nifty_raw.xlsx,data/processed_data.xlsx,streamlit_app.py,marketiq/**,requirements-streamlit.txt,requirements-dev.txt,requirements-notebook.txt}"
     }
   }
 }

@@ -24,7 +24,7 @@
         <button class="nav-item" data-view="sectors"><span>▥</span> Sector intelligence</button>
         <button class="nav-item" data-view="signals"><span>◉</span> Signals & sentiment</button>
       </nav>
-      <div class="sidebar-bottom"><span class="live-dot"></span> Historical dataset mode <small>42-stock universe · cached data</small></div>
+      <div class="sidebar-bottom"><span class="live-dot"></span> Cached historical dataset <small>42-stock universe · cached price and headline data</small></div>
     </aside>
     <main class="main">
       <header class="topbar"><div><div class="eyebrow">MARKET OVERVIEW / INDIA</div><h1 id="page-title">Market overview</h1></div><div class="top-meta"><span class="market-pill"><i></i> NSE DATASET</span><button class="refresh" id="refresh">↻ Refresh</button></div></header>
@@ -35,7 +35,7 @@
           <article class="metric"><span>STOCKS TRACKED</span><strong id="m-tickers">—</strong><small>Across selected universe</small></article>
           <article class="metric"><span>SECTORS</span><strong id="m-sectors">—</strong><small>Industry classifications</small></article>
           <article class="metric"><span>AVG DAILY RETURN</span><strong id="m-return">—</strong><small>Latest available observations</small></article>
-          <article class="metric"><span>AVG SENTIMENT</span><strong id="m-sentiment">—</strong><small>VADER compound score</small></article>
+          <article class="metric"><span>AVG SENTIMENT</span><strong id="m-sentiment">—</strong><small>Matched cached headlines</small></article>
         </div>
         <div class="grid-two">
           <article class="panel"><div class="panel-head"><div><span class="eyebrow">MARKET BREADTH</span><h3>Signal distribution</h3></div><span class="muted">Latest row per stock</span></div><div class="chart-wrap"><canvas id="signal-chart"></canvas></div><div class="legend-row"><span><i class="dot green"></i> Buy <b id="buy-count">—</b></span><span><i class="dot amber"></i> Hold <b id="hold-count">—</b></span><span><i class="dot red"></i> Sell <b id="sell-count">—</b></span></div></article>
