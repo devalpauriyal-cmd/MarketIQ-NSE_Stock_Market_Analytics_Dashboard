@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "index.py": {
+      "excludeFiles": "{tests/**,notebooks/**,docs/**,graphs/**,*.ipynb,*.xlsx,*.docx,*.jpeg,*.png,streamlit_app.py,marketiq/**,requirements-streamlit.txt,requirements-dev.txt,requirements-notebook.txt}"
+    }
+  }
+}

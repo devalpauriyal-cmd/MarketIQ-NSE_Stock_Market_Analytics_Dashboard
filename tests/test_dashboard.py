@@ -13,7 +13,7 @@ PAGES = [
 
 @pytest.fixture(scope="module")
 def dashboard():
-    return AppTest.from_file(str(ROOT / "app.py"), default_timeout=120).run()
+    return AppTest.from_file(str(ROOT / "streamlit_app.py"), default_timeout=120).run()
 
 
 @pytest.mark.parametrize("page", PAGES)

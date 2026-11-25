@@ -1,8 +1,1 @@
-streamlit
-pandas
-numpy
-plotly
-openpyxl
-yfinance
-vaderSentiment
-statsmodels
+fastapi>=0.115,<1.0

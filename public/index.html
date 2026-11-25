@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0b1020" />
+  <meta name="description" content="MarketIQ — NSE stock market analytics, technical indicators and sentiment dashboard." />
+  <title>MarketIQ — NSE Market Intelligence</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="#"><span class="brand-mark">M</span><span>Market<span class="brand-light">IQ</span><small>NSE MARKET INTELLIGENCE</small></span></a>
+      <div class="nav-label">WORKSPACE</div>
+      <nav id="navigation">
+        <button class="nav-item active" data-view="overview"><span>◫</span> Overview</button>
+        <button class="nav-item" data-view="stocks"><span>⌁</span> Stock analysis</button>
+        <button class="nav-item" data-view="sectors"><span>▥</span> Sector intelligence</button>
+        <button class="nav-item" data-view="signals"><span>◉</span> Signals & sentiment</button>
+      </nav>
+      <div class="sidebar-bottom"><span class="live-dot"></span> Historical dataset mode <small>42-stock universe · cached data</small></div>
+    </aside>
+    <main class="main">
+      <header class="topbar"><div><div class="eyebrow">MARKET OVERVIEW / INDIA</div><h1 id="page-title">Market overview</h1></div><div class="top-meta"><span class="market-pill"><i></i> NSE DATASET</span><button class="refresh" id="refresh">↻ Refresh</button></div></header>
+      <div id="error" class="error hidden"></div>
+      <section id="overview" class="view">
+        <div class="intro"><div><div class="eyebrow">YOUR MARKET, IN PERSPECTIVE</div><h2>Signals behind the <em>numbers.</em></h2><p>Explore historical NSE price action, technical indicators and headline sentiment across the selected stock universe.</p></div><div class="date-chip"><span>DATA THROUGH</span><strong id="latest-date">Loading…</strong></div></div>
+        <div class="metrics">
+          <article class="metric"><span>STOCKS TRACKED</span><strong id="m-tickers">—</strong><small>Across selected universe</small></article>
+          <article class="metric"><span>SECTORS</span><strong id="m-sectors">—</strong><small>Industry classifications</small></article>
+          <article class="metric"><span>AVG DAILY RETURN</span><strong id="m-return">—</strong><small>Latest available observations</small></article>
+          <article class="metric"><span>AVG SENTIMENT</span><strong id="m-sentiment">—</strong><small>VADER compound score</small></article>
+        </div>
+        <div class="grid-two">
+          <article class="panel"><div class="panel-head"><div><span class="eyebrow">MARKET BREADTH</span><h3>Signal distribution</h3></div><span class="muted">Latest row per stock</span></div><div class="chart-wrap"><canvas id="signal-chart"></canvas></div><div class="legend-row"><span><i class="dot green"></i> Buy <b id="buy-count">—</b></span><span><i class="dot amber"></i> Hold <b id="hold-count">—</b></span><span><i class="dot red"></i> Sell <b id="sell-count">—</b></span></div></article>
+          <article class="panel"><div class="panel-head"><div><span class="eyebrow">UNIVERSE SNAPSHOT</span><h3>Latest stock signals</h3></div><button class="text-button" data-go="stocks">View all →</button></div><div id="top-stocks" class="compact-list"><div class="skeleton"></div></div></article>
+        </div>
+        <article class="panel"><div class="panel-head"><div><span class="eyebrow">SECTOR PERFORMANCE</span><h3>Average daily return by sector</h3></div></div><div class="chart-wrap tall"><canvas id="sector-chart"></canvas></div></article>
+      </section>
+      <section id="stocks" class="view hidden">
+        <div class="section-intro"><div><div class="eyebrow">EQUITY RESEARCH</div><h2>Stock analysis</h2><p>Inspect the latest available price, trend indicators, volatility and historical movement.</p></div></div>
+        <div class="toolbar"><input id="stock-search" type="search" placeholder="Search ticker e.g. RELIANCE.NS" /><select id="stock-select"><option value="">Choose a stock</option></select></div>
+        <div class="metrics compact"><article class="metric"><span>LAST CLOSE</span><strong id="s-close">—</strong><small id="s-date">Latest observation</small></article><article class="metric"><span>DAILY RETURN</span><strong id="s-return">—</strong><small>Latest available session</small></article><article class="metric"><span>RSI (14)</span><strong id="s-rsi">—</strong><small>Momentum indicator</small></article><article class="metric"><span>VOLATILITY (14D)</span><strong id="s-vol">—</strong><small>Rolling volatility</small></article></div>
+        <article class="panel"><div class="panel-head"><div><span class="eyebrow">PRICE HISTORY</span><h3 id="history-title">Select a ticker</h3></div><span class="muted">Historical close · INR</span></div><div class="chart-wrap tall"><canvas id="price-chart"></canvas></div></article>
+        <article class="panel"><div class="panel-head"><div><span class="eyebrow">INDICATOR SNAPSHOT</span><h3>Trend & signal context</h3></div></div><div id="indicator-grid" class="indicator-grid"><div class="muted">Choose a stock to inspect its indicators.</div></div></article>
+      </section>
+      <section id="sectors" class="view hidden">
+        <div class="section-intro"><div><div class="eyebrow">CROSS-INDUSTRY VIEW</div><h2>Sector intelligence</h2><p>Compare average returns, volatility and sentiment for the latest observation in each stock.</p></div></div>
+        <article class="panel"><div class="panel-head"><div><span class="eyebrow">SECTOR SCORECARD</span><h3>Sector comparison</h3></div></div><div class="table-wrap"><table><thead><tr><th>SECTOR</th><th>STOCKS</th><th>AVG RETURN</th><th>VOLATILITY</th><th>SENTIMENT</th><th>BUY / SELL</th></tr></thead><tbody id="sector-rows"><tr><td colspan="6">Loading sector data…</td></tr></tbody></table></div></article>
+      </section>
+      <section id="signals" class="view hidden">
+        <div class="section-intro"><div><div class="eyebrow">QUANTITATIVE INDICATORS</div><h2>Signals & sentiment</h2><p>Review the rule-based BUY / HOLD / SELL classification and the available sentiment coverage.</p></div></div>
+        <article class="panel"><div class="panel-head"><div><span class="eyebrow">LATEST CLASSIFICATION</span><h3>Stock-level signal monitor</h3></div><select id="signal-filter"><option value="">All signals</option><option>BUY</option><option>HOLD</option><option>SELL</option></select></div><div class="table-wrap"><table><thead><tr><th>TICKER</th><th>SECTOR</th><th>LAST CLOSE</th><th>SENTIMENT</th><th>NEWS COUNT</th><th>SIGNAL</th></tr></thead><tbody id="signal-rows"><tr><td colspan="6">Loading signals…</td></tr></tbody></table></div></article>
+        <p class="disclaimer">Research aid only. BUY / HOLD / SELL labels summarize indicator rules; they are not investment recommendations, a backtest, or a guarantee of future performance.</p>
+      </section>
+      <footer>MarketIQ <span>·</span> Built with Python, FastAPI and Chart.js <span>·</span> Educational analytics project</footer>
+    </main>
+  </div>
+</body>
+</html>
